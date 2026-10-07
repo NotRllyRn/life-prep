@@ -173,6 +173,8 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	var wg sync.WaitGroup
+	// Coalesce new-mail wakeups; dispatch still has a periodic recovery sweep.
+	dispatchWake := make(chan struct{}, 1)
 	// Stop and join workers before releasing the writer lock or closing SQLite,
 	// including partial startup failures on a later account.
 	defer func() { cancel(); wg.Wait() }()
@@ -216,7 +218,13 @@ func run() error {
 			if e != nil {
 				return e
 			}
-			return s.Ingest(a.ID, next, ms)
+			if e = s.Ingest(a.ID, next, ms); e != nil {
+				return e
+			}
+			if len(ms) > 0 {
+				wakeDispatch(dispatchWake)
+			}
+			return nil
 		}
 		if e = syncMail(cmd == "backfill"); e != nil {
 			return e
@@ -234,11 +242,11 @@ func run() error {
 			for ctx.Err() == nil {
 				log.Printf("receive loop starting account=%q subscription=%q", a.ID, a.Subscription)
 				e := googlemail.Receive(ctx, a.Project, a.Subscription, a.PubsubCredentials, func(_ context.Context, b []byte) error {
-					var hint struct{ EmailAddress, HistoryID string }
-					if e := json.Unmarshal(b, &hint); e != nil {
-						return e
+					email, err := notificationEmail(b)
+					if err != nil {
+						return err
 					}
-					if a.Email == "" || hint.EmailAddress != a.Email {
+					if a.Email == "" || email != a.Email {
 						return errors.New("notification mailbox mismatch")
 					}
 					return syncMail(false)
@@ -300,6 +308,7 @@ func run() error {
 			wg.Wait()
 			return nil
 		case <-tick.C:
+		case <-dispatchWake:
 		}
 	}
 }
