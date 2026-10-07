@@ -2,6 +2,7 @@
 /state/
 /credentials/
 /bin/
+/life-prep
 *.db
 *.db-*
 *.lock

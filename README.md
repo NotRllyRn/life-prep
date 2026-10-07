@@ -6,7 +6,7 @@ Preparatory, opt-in local Gmail context queue for Hermes. No integrations are ac
 
 **No automatic completion bridge is implemented.** Signed dispatch/HTTP 202 is acceptance only; completion is recorded solely through an operator-verified `receipt CONFIG ID RESULT_FILE`. No end-to-end Gmail → Hermes preparation → notice → completion workflow has been validated. Installation does not activate accounts, routes, skills, schedules or services. This is a credential-free tested preparatory foundation, not production-ready unattended automation.
 
-The received-mail selection contract is exactly `-in:sent -in:drafts`: archived received mail is included; spam/trash are excluded by default. Apply the same exclusions to initial/backfill listing, history additions and expired-history recovery. See [architecture](docs/architecture.md) for the implementation-verification gate.
+The received-mail selection contract is exactly `-in:sent -in:drafts`: archived received mail is included; spam/trash are excluded by default. Apply the same exclusions to initial/backfill listing, history additions and expired-history recovery. Credential-free tests verify this selection; live validation remains an activation gate. See [architecture](docs/architecture.md).
 
 Production API/model/tool budgets, retry/resource ceilings, retention/deletion policies and mailbox/queue/artifact capacity limits are **explicitly deferred**; they are neither enforced nor approved by this repository. Resolve and exercise them before activation. Normally available Hermes harness sources are already approved for relevant read-only investigation; no per-source allowlist is required. That approval does not grant new authentication, tool elevation, external mutations or undesignated notices.
 

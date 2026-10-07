@@ -12,7 +12,7 @@ All commands take config path as second argument (demo instead takes a private d
 - `backfill`: explicit 21-day re-list for both accounts, idempotent queue; fails if daemon writer lock held.
 - `watch`: register/renew both watches, never replace processed cursors.
 - `retry CONFIG ID`: only definite failed dispatch, after fixing auth/config.
-- `receipt CONFIG ID RESULT_FILE`: operator attests verified preparation outcome; copies nonempty human-readable result to private durable artifacts and records completed. Never use merely a webhook HTTP response as the result.
+- `receipt CONFIG ID RESULT_FILE`: operator attests verified preparation outcome; atomically copies nonempty human-readable result to private durable artifacts and records completed with a separate `Result` path (`Artifact` remains the input; `Error` is diagnostic). Concurrent receipts are serialized per event and cannot overwrite a completed result. Never use merely a webhook HTTP response as the result.
 
 For uncertain/accepted events, inspect Hermes logs and actual artifacts/notices correlated by event ID. Reconcile first; there is deliberately no force replay flag. If no trustworthy outcome can be established, keep uncertain and investigate manually. No unattended bridge claims success. Save outcomes as human-readable result records with followup pointers and notice delivery evidence.
 
