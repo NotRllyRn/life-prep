@@ -52,6 +52,8 @@ An isolated execution of the installed validator method (AST extraction, no serv
 
 ## Acceptance is not completion
 
+**No automatic completion bridge is implemented or validated.** The supplied daemon completion path is manual `receipt CONFIG ID RESULT_FILE`, based on operator-verified artifacts and any required notice evidence. A future authenticated bridge remains deferred and must be exercised before it can replace manual reconciliation.
+
 For ordinary agent routes, the installed handler creates a background task and returns HTTP 202 with `status: accepted`, `route`, `event`, and `delivery_id`. `handle_message` itself starts another background processing path. This proves acceptance for dispatch, not agent start, successful tool use, artifact creation, notice delivery, or durable completion.
 
 HTTP 200 can instead mean an ignored event/filter or duplicate. `deliver_only` is a distinct no-agent forwarding mode with its own delivery result; it is not appropriate for contextual preparation. A session ending also does not prove successful preparation: the completion hook closes sessions on failure paths too.
@@ -64,7 +66,7 @@ Ordinary events use `webhook:{route_name}:{delivery_id}` as separate chat identi
 
 Default webhook tools are constrained research/clarification tools. Local preparation needing file/terminal or approved connectors requires explicit operator approval of a manually configured route-specific toolset. An override replaces, rather than merges with, platform resolution. Dynamic subscription creation cannot self-grant toolsets. Authentication bypasses messaging-user allowlists: possession of a route secret can trigger agent execution with the route's capabilities. Signed mail remains untrusted content.
 
-Keep command approvals enabled, but do not mistake dangerous-command detection for a universal read-only or egress policy. A connector or script may mutate without triggering a shell approval. Approve each tool's usable operations, identities and destinations; use technical read-only credentials/egress restrictions where required. The skill is a behavioral charter, not a sandbox, privilege boundary or guarantee against prompt injection.
+Keep command approvals enabled, but do not mistake dangerous-command detection for a universal read-only or egress policy. A connector or script may mutate without triggering a shell approval. Existing normally available harness sources are already approved for relevant read-only investigation; no per-source allowlist is required. This does not approve new authentication or route-specific elevation. Validate each tool's usable read operations and side effects, and separately approve any new identities or designated notice destinations; use technical read-only credentials/egress restrictions where required. The skill is a behavioral charter, not a sandbox, privilege boundary or guarantee against prompt injection.
 
 ## Generic configuration sketch — not applied
 
@@ -95,7 +97,7 @@ This intentionally incomplete, disabled sketch is not runnable configuration. Re
 
 ## Activation gates still open
 
-1. Approve the broad contextual local-preparation charter, approved source/tool access, local output roots, retention and budgets. Access availability is not permission.
+1. Retain the existing approval for relevant read-only investigation across normally available Hermes harness sources, without a per-source allowlist. Approve additional authentication/access or elevated tools separately, along with local output roots and the still-deferred production budgets, retention and capacity controls. Mere availability beyond that existing approval is not permission.
 2. Approve the target profile, skill installation and verified loading, dedicated secret provisioning, loopback-only route, manual tool elevation and operation-specific restrictions. No Hermes change is authorized by this document.
 3. Validate that reads do not mark mail read, acknowledge messages, update task state, or cause other incidental external mutations. Disable such side effects or block the tool.
 4. Establish an authenticated human approval path for blocked operations; unattended events must stop safely rather than self-approve or wait indefinitely. Any external action beyond designated notices needs a separate interactive workflow, not this background charter.

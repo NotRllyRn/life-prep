@@ -8,9 +8,13 @@ Implementation checklist:
 - [x] Artifacts, dispatch state and operator-verified completion receipts
 - [x] Daemon and diagnostic CLI
 - [x] Credential-free fixture tests, race/vet/build/demo
-- [x] Setup, operations, systemd and CI
+- [x] Setup/operations documentation and unactivated systemd/CI templates (not deployed or remotely exercised)
 
 Verification: Go tests with race detector, vet and build passed locally. Repeated fixture demo yielded the same single durable event and artifact. Disabled doctor failed explicitly. Tests cover SDK pagination/MIME/watch/history expiration, transactional rollback, HMAC acceptance, pause, uncertain-response no replay, receipt validation, crash recovery and DST date dedup. CI is supplied but has not run remotely.
+
+Received-mail contract: exactly `-in:sent -in:drafts`; archived included, spam/trash excluded by default. Verify both list-query and history-label filtering, including expired-history recovery, before claiming implementation.
+
+Production budgets, retention/deletion and capacity controls are explicitly deferred. Normally available Hermes harness sources already have approval for relevant read-only investigation without a per-source allowlist; new authentication/elevation/external mutation and notices remain independently restricted.
 
 Remaining hookup gates: live OAuth/PubSub IAM validation; automatic verified receipt bridge; Hermes background approvals; generic private Discord readiness/urgent/briefing route configuration and actual delivery evidence. These are not claimed deployed. Full resync memory capacity and manual retention need operator validation. Go dependencies require Go 1.26; installed 1.24.4 auto-downloaded a newer toolchain.
 

@@ -1,5 +1,7 @@
 # Research-backed setup (not executed)
 
+No activation is authorized by this review. Received-mail selection must use exactly `-in:sent -in:drafts`, include archived mail, and exclude spam/trash by default across listing and history/recovery; verify the code and fixtures before live setup. Production budgets, retention/deletion and capacity controls are deferred acceptance gates, not supplied defaults. Relevant read-only investigation of normally available Hermes harness sources is already approved without a per-source allowlist; new authentication and route elevation remain separate approvals.
+
 Primary sources reviewed:
 - https://developers.google.com/workspace/gmail/api/guides/push
 - https://developers.google.com/workspace/gmail/api/guides/sync

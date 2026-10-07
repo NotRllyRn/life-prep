@@ -1,6 +1,6 @@
 # Local verification handoff
 
-Executed during this build:
+Prior build evidence recorded below (not re-executed by this documentation-only review):
 
 - `go test -race ./...`: PASS, core and Google adapter packages; CLI currently has no package tests.
 - `go vet ./...`: PASS.
@@ -13,6 +13,10 @@ Tests use credential-free fixtures. Gmail httptest covers profile/list/history p
 
 Source review identified Hermes generic V2 signing, timestamp tolerance, per-event sessions, elevated tool controls and non-durable dedup. Installed source validator was probed separately by extracting its actual method: signature accepted, tamper and absent timestamp rejected. This is not end-to-end route activation proof.
 
-Publication: parent owns creating/pushing the public repo. This build makes only local commits; an origin URL was already present and was left unchanged. No remote API operation, push, live credentials, Hermes configuration change or systemd activation was performed.
+Publication requires a separate authorized workflow. This build makes only local commits; an origin URL was already present and was left unchanged. No remote API operation, push, live credentials, Hermes configuration change or systemd activation was performed.
+
+Documentation review found the pre-change Gmail adapter lacked the exact received filter `-in:sent -in:drafts` and history label exclusions. Code changes and targeted fixture evidence must establish archived inclusion and default spam/trash exclusion before this gap is closed. This review does not claim the correction or live validation has happened.
+
+Production budgets, retention/deletion and capacity controls are explicitly deferred. Relevant read-only investigation of normally available Hermes harness sources is already approved without a per-source allowlist; new authentication, elevation, external mutations and undesignated notices remain restricted. No activation was performed by this review.
 
 Before activation: validate read-only grants, topic/subscription IAM, background tool approvals, shared private artifact access, designated readiness/urgent/briefing Discord notices, reliable completion evidence, capacity and retention. Receipt is operator-assisted; automatic receipt bridge and automatic notice delivery remain unsupported until externally configured/verified. Latest selected SDK dependencies raise the required Go toolchain to 1.26; the installed Go 1.24.4 launcher downloaded a compatible newer toolchain successfully.
