@@ -243,6 +243,15 @@ func (s *Store) Materialize() error {
 		if e = s.db.QueryRow(`SELECT body FROM events WHERE id=?`, v.ID).Scan(&b); e != nil {
 			return e
 		}
+		// Keep provenance alongside the message for independent Hermes sessions.
+		b, e = json.Marshal(struct {
+			EventID string
+			Account string
+			Message json.RawMessage
+		}{v.ID, v.Account, json.RawMessage(b)})
+		if e != nil {
+			return e
+		}
 		p := filepath.Join(s.dir, v.ID+".json")
 		tmp := p + ".tmp"
 		if e = os.WriteFile(tmp, b, 0600); e != nil {
@@ -280,6 +289,14 @@ func (s *Store) Dispatch(ctx context.Context, url, secret string) error {
 	for _, v := range vs {
 		if v.State != "pending" {
 			continue
+		}
+		// A pause applies to the next request even during a large batch.
+		paused = ""
+		if err := s.db.QueryRow(`SELECT value FROM settings WHERE key='paused'`).Scan(&paused); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if paused == "true" {
+			return nil
 		}
 		b, _ := json.Marshal(map[string]any{"event_type": "life-prep.context", "event_id": v.ID, "context": map[string]string{"source_ref": v.Artifact}})
 		ts := strconv.FormatInt(time.Now().Unix(), 10)

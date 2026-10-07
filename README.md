@@ -24,4 +24,4 @@ The demo uses explicitly synthetic fixture content in the actual transaction/art
 
 Read [design](docs/plan.md), [architecture](docs/architecture.md), [setup](docs/setup.md), [Hermes protocol](docs/hermes.md), [runbook](docs/runbook.md), and the proposed [charter](skills/life-prep/SKILL.md).
 
-Public repository must contain only code, generic examples and documentation. Credentials, actual mailbox identifiers, state and artifacts belong outside version control. Local documentation work does not authorize remote publication or deployment; no push is performed by this review.
+This public repository contains code, generic examples and documentation only. Credentials, actual mailbox identifiers, state and artifacts belong outside version control. Publishing the code does not install or activate any integration.

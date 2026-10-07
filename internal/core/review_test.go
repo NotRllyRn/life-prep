@@ -189,10 +189,11 @@ func TestSchoolContextSurvivesArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got googlemail.Message
-	if err := json.Unmarshal(b, &got); err != nil {
+	var envelope struct{ Message googlemail.Message }
+	if err := json.Unmarshal(b, &envelope); err != nil {
 		t.Fatal(err)
 	}
+	got := envelope.Message
 	if got.Date != m.Date || got.InternalDate != 123 || len(got.LabelIDs) != 1 || got.LabelIDs[0] != "school-origin" || len(got.Attachments) != 1 || got.Attachments[0] != m.Attachments[0] {
 		t.Fatal(got)
 	}
