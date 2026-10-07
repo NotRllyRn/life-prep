@@ -1,0 +1,6 @@
+name: life-prep-context
+version: 0.1.0
+description: Durable exact-item context for trusted life-prep preparation notices.
+provides_hooks:
+  - pre_gateway_dispatch
+  - gateway_ready

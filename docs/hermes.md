@@ -1,5 +1,10 @@
 # Hermes integration research and activation gates
 
+> Historical protocol research below is retained as a baseline, not current
+> deployment status. The implemented optional native plugin and its tested
+> integration contracts are documented in [context handoff](context-handoff.md).
+> Private deployment evidence is kept outside this public repository.
+
 Research baseline: 2026-10-07. Installed source: `/home/hermes/hermes-agent`, commit `78ffd71f14021c808a959ba598b33b557f93d8b1`. This document describes a proposed integration, not a deployed route. No Hermes configuration, subscriptions, services, credentials, or remote systems were changed.
 
 ## Sources and scope

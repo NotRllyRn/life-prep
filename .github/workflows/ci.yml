@@ -15,3 +15,7 @@ jobs:
       - run: go vet ./...
       - run: go build -o bin/life-prep ./cmd/life-prep
       - run: bin/life-prep demo "$RUNNER_TEMP/life-prep-demo"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m unittest discover -s integrations/hermes -p 'test_*.py' -v

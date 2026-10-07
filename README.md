@@ -10,6 +10,15 @@ The received-mail selection contract is exactly `-in:sent -in:drafts`: archived 
 
 Production API/model/tool budgets, retry/resource ceilings, retention/deletion policies and mailbox/queue/artifact capacity limits are **explicitly deferred**; they are neither enforced nor approved by this repository. Resolve and exercise them before activation. Normally available Hermes harness sources are already approved for relevant read-only investigation; no per-source allowlist is required. That approval does not grant new authentication, tool elevation, external mutations or undesignated notices.
 
+## Durable notice replies and threads
+
+The optional native Hermes context plugin binds verified readiness message IDs
+to exact events, source email references, prepared files, plans and originating
+sessions. Replies and message-started threads resolve that binding automatically;
+unknown references fail closed rather than selecting the latest item. See
+[context handoff](docs/context-handoff.md) for deployment, recovery, synthetic
+verification and runtime limitations. Installation still does not activate it.
+
 ## Try without credentials
 
 ```
