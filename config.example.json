@@ -1,0 +1,10 @@
+{
+  "Enabled": false,
+  "Database": "state/life-prep.db",
+  "Artifacts": "state/artifacts",
+  "Accounts": [
+    {"ID":"primary","Email":"","Credentials":"credentials/primary-client.json","Token":"credentials/primary-token.json","Project":"YOUR_PROJECT","Subscription":"primary-pull","PubsubCredentials":"credentials/subscriber.json","Topic":"projects/YOUR_PROJECT/topics/primary-mail"},
+    {"ID":"secondary","Email":"","Credentials":"credentials/secondary-client.json","Token":"credentials/secondary-token.json","Project":"YOUR_PROJECT","Subscription":"secondary-pull","PubsubCredentials":"credentials/subscriber.json","Topic":"projects/YOUR_PROJECT/topics/secondary-mail"}
+  ],
+  "Hermes":{"Enabled":false,"URL":"http://127.0.0.1:8644/webhooks/life-prep","SecretEnv":"LIFE_PREP_WEBHOOK_SECRET"}
+}

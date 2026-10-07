@@ -1,0 +1,8 @@
+/config.json
+/state/
+/credentials/
+/bin/
+*.db
+*.db-*
+*.lock
+.env

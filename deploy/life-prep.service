@@ -1,0 +1,20 @@
+[Unit]
+Description=Local preparation mailbox queue
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=life-prep
+WorkingDirectory=/var/lib/life-prep
+ExecStart=/opt/life-prep/life-prep serve /etc/life-prep/config.json
+EnvironmentFile=-/etc/life-prep/secrets.env
+Restart=on-failure
+RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/life-prep
+[Install]
+WantedBy=multi-user.target

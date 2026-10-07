@@ -4,10 +4,14 @@ Small Go daemon: official Gmail/PubSub adapters -> serialized account synchroniz
 
 Implementation checklist:
 - [x] Research official API docs and installed Hermes protocol
-- [ ] SQLite atomic ingestion and duplicate protection
-- [ ] Artifacts, dispatch state and completion receipts
-- [ ] Daemon and diagnostic CLI
-- [ ] Credential-free fixture tests, race/vet/build/demo
-- [ ] Setup, operations, systemd and CI
+- [x] SQLite atomic ingestion and duplicate protection
+- [x] Artifacts, dispatch state and operator-verified completion receipts
+- [x] Daemon and diagnostic CLI
+- [x] Credential-free fixture tests, race/vet/build/demo
+- [x] Setup, operations, systemd and CI
+
+Verification: Go tests with race detector, vet and build passed locally. Repeated fixture demo yielded the same single durable event and artifact. Disabled doctor failed explicitly. Tests cover SDK pagination/MIME/watch/history expiration, transactional rollback, HMAC acceptance, pause, uncertain-response no replay, receipt validation, crash recovery and DST date dedup. CI is supplied but has not run remotely.
+
+Remaining hookup gates: live OAuth/PubSub IAM validation; automatic verified receipt bridge; Hermes background approvals; generic private Discord readiness/urgent/briefing route configuration and actual delivery evidence. These are not claimed deployed. Full resync memory capacity and manual retention need operator validation. Go dependencies require Go 1.26; installed 1.24.4 auto-downloaded a newer toolchain.
 
 Activation gates remain separate: OAuth grants, PubSub IAM/resources, Hermes approval validation, notice routing, receipt bridge verification. No deployment or Hermes config changes during this build.
