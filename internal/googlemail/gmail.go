@@ -19,7 +19,22 @@ import (
 	"google.golang.org/api/option"
 )
 
-type Message struct{ ID, ThreadID, Subject, From, Body string }
+// Message preserves the minimal context needed for downstream preparation.
+// InternalDate is Gmail's received timestamp in milliseconds since the epoch;
+// Date is the original Date header, which need not match the received timestamp.
+type Message struct {
+	ID, ThreadID, Subject, From, Body, Date string
+	LabelIDs                                []string
+	InternalDate                            int64
+	Attachments                             []AttachmentRef
+}
+
+// AttachmentRef describes a MIME part without downloading its contents.
+// ID may be empty for inline data; PartID still identifies that MIME part.
+type AttachmentRef struct {
+	ID, PartID, Filename, MimeType string
+	Size                           int64
+}
 type Client struct{ service *gmail.Service }
 
 // HistoryExpiredError means a full Backfill is required; do not advance the cursor.
@@ -73,9 +88,9 @@ func (c *Client) Backfill(ctx context.Context, days int) ([]Message, string, err
 	if err != nil {
 		return nil, "", err
 	}
-	query := ""
+	query := "-in:sent -in:drafts"
 	if days > 0 {
-		query = "after:" + strconv.FormatInt(time.Now().AddDate(0, 0, -days).Unix(), 10)
+		query = "after:" + strconv.FormatInt(time.Now().AddDate(0, 0, -days).Unix(), 10) + " " + query
 	}
 	var out []Message
 	seen := map[string]bool{}
@@ -97,7 +112,9 @@ func (c *Client) Backfill(ctx context.Context, days int) ([]Message, string, err
 			if err != nil {
 				return nil, "", err
 			}
-			out = append(out, message)
+			if received(message.LabelIDs) {
+				out = append(out, message)
+			}
 		}
 		page = response.NextPageToken
 		if page == "" {
@@ -141,7 +158,9 @@ func (c *Client) History(ctx context.Context, cursor string) ([]Message, string,
 				if err != nil {
 					return nil, "", err
 				}
-				out = append(out, message)
+				if received(message.LabelIDs) {
+					out = append(out, message)
+				}
 			}
 		}
 		page = response.NextPageToken
@@ -156,57 +175,97 @@ func isNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Code == 404
 }
 
-// Get fetches headers and recursively decodes inline MIME bodies. Plain text is
-// preferred; HTML is returned unchanged when no plain-text body exists.
+// received includes archived messages: INBOX membership is not required.
+func received(labels []string) bool {
+	for _, label := range labels {
+		if label == "SENT" || label == "DRAFT" {
+			return false
+		}
+	}
+	return true
+}
+
+// Get fetches headers, metadata and inline MIME bodies, never attachments.
+// Plain text is preferred; HTML is preserved when no plain-text body exists.
 func (c *Client) Get(ctx context.Context, id string) (Message, error) {
 	raw, err := c.service.Users.Messages.Get("me", id).Format("full").Context(ctx).Do()
 	if err != nil {
 		return Message{}, err
 	}
-	out := Message{ID: raw.Id, ThreadID: raw.ThreadId}
+	return decodeMessage(raw)
+}
+
+// Thread reads every message in a thread, including sent context, without
+// downloading attachments. Received-only filtering belongs to synchronization.
+func (c *Client) Thread(ctx context.Context, id string) ([]Message, error) {
+	raw, err := c.service.Users.Threads.Get("me", id).Format("full").Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	var out []Message
+	for _, message := range raw.Messages {
+		decoded, err := decodeMessage(message)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, decoded)
+	}
+	return out, nil
+}
+
+// Attachment explicitly downloads a single attachment by its preserved ID.
+func (c *Client) Attachment(ctx context.Context, messageID, attachmentID string) ([]byte, error) {
+	raw, err := c.service.Users.Messages.Attachments.Get("me", messageID, attachmentID).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return decodeData(raw.Data)
+}
+
+func decodeData(data string) ([]byte, error) {
+	return base64.RawURLEncoding.DecodeString(strings.TrimRight(data, "="))
+}
+
+func decodeMessage(raw *gmail.Message) (Message, error) {
+	if raw == nil {
+		return Message{}, errors.New("nil Gmail message")
+	}
+	out := Message{ID: raw.Id, ThreadID: raw.ThreadId, LabelIDs: append([]string(nil), raw.LabelIds...), InternalDate: raw.InternalDate}
 	if raw.Payload == nil {
 		return out, nil
 	}
 	for _, h := range raw.Payload.Headers {
+		if h == nil {
+			continue
+		}
 		switch {
 		case strings.EqualFold(h.Name, "Subject"):
 			out.Subject = h.Value
 		case strings.EqualFold(h.Name, "From"):
 			out.From = h.Value
+		case strings.EqualFold(h.Name, "Date"):
+			out.Date = h.Value
 		}
 	}
-	plain, html, err := c.body(ctx, id, raw.Payload)
-	if err != nil {
-		return Message{}, err
-	}
-	out.Body = strings.Join(plain, "\n")
-	if len(plain) == 0 {
-		out.Body = strings.Join(html, "\n")
-	}
-	return out, nil
-}
-func (c *Client) body(ctx context.Context, id string, p *gmail.MessagePart) (plain, html []string, err error) {
-	if p == nil {
-		return
-	}
-	if p.MimeType == "text/plain" || p.MimeType == "text/html" {
-		if p.Filename != "" {
-			return
+	var plain, html []string
+	var walk func(*gmail.MessagePart) error
+	walk = func(p *gmail.MessagePart) error {
+		if p == nil {
+			return nil
 		}
-		if p.Body != nil {
-			data := p.Body.Data
-			if data == "" && p.Body.AttachmentId != "" {
-				var b *gmail.MessagePartBody
-				b, err = c.service.Users.Messages.Attachments.Get("me", id, p.Body.AttachmentId).Context(ctx).Do()
-				if err != nil {
-					return
-				}
-				data = b.Data
+		attachment := p.Filename != ""
+		for _, h := range p.Headers {
+			if h != nil && strings.EqualFold(h.Name, "Content-Disposition") && strings.EqualFold(strings.TrimSpace(strings.SplitN(h.Value, ";", 2)[0]), "attachment") {
+				attachment = true
 			}
-			var decoded []byte
-			decoded, err = base64.RawURLEncoding.DecodeString(strings.TrimRight(data, "="))
+		}
+		if p.Body != nil && (attachment || p.Body.AttachmentId != "") {
+			out.Attachments = append(out.Attachments, AttachmentRef{ID: p.Body.AttachmentId, PartID: p.PartId, Filename: p.Filename, MimeType: p.MimeType, Size: p.Body.Size})
+		}
+		if !attachment && p.Body != nil && p.Body.Data != "" && (p.MimeType == "text/plain" || p.MimeType == "text/html") {
+			decoded, err := decodeData(p.Body.Data)
 			if err != nil {
-				return
+				return err
 			}
 			if p.MimeType == "text/plain" {
 				plain = append(plain, string(decoded))
@@ -214,17 +273,21 @@ func (c *Client) body(ctx context.Context, id string, p *gmail.MessagePart) (pla
 				html = append(html, string(decoded))
 			}
 		}
-	}
-	for _, part := range p.Parts {
-		var a, b []string
-		a, b, err = c.body(ctx, id, part)
-		if err != nil {
-			return
+		for _, part := range p.Parts {
+			if err := walk(part); err != nil {
+				return err
+			}
 		}
-		plain = append(plain, a...)
-		html = append(html, b...)
+		return nil
 	}
-	return
+	if err := walk(raw.Payload); err != nil {
+		return Message{}, err
+	}
+	out.Body = strings.Join(plain, "\n")
+	if len(plain) == 0 {
+		out.Body = strings.Join(html, "\n")
+	}
+	return out, nil
 }
 
 // Watch starts or renews a watch. Call daily; topic must be a fully qualified

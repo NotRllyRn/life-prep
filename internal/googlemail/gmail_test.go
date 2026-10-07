@@ -31,8 +31,8 @@ func TestBackfillPaginationAndBody(t *testing.T) {
 			fmt.Fprint(w, `{"historyId":"100"}`)
 		case strings.HasSuffix(r.URL.Path, "/messages"):
 			pages++
-			if !strings.HasPrefix(r.URL.Query().Get("q"), "after:") {
-				t.Error("missing time query")
+			if !strings.HasPrefix(r.URL.Query().Get("q"), "after:") || !strings.HasSuffix(r.URL.Query().Get("q"), " -in:sent -in:drafts") {
+				t.Error("missing time or received-scope query")
 			}
 			if r.URL.Query().Get("pageToken") == "" {
 				fmt.Fprint(w, `{"messages":[{"id":"a"}],"nextPageToken":"next"}`)
