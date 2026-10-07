@@ -178,7 +178,7 @@ func isNotFound(err error) bool {
 // received includes archived messages: INBOX membership is not required.
 func received(labels []string) bool {
 	for _, label := range labels {
-		if label == "SENT" || label == "DRAFT" {
+		if label == "SENT" || label == "DRAFT" || label == "SPAM" || label == "TRASH" {
 			return false
 		}
 	}

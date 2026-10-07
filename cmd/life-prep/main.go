@@ -51,7 +51,7 @@ func run() error {
 		if e != nil {
 			return e
 		}
-		if e = json.Unmarshal(b, &cfg); e != nil {
+		if cfg, e = decodeConfig(b); e != nil {
 			return e
 		}
 		if cfg.Database == "" || cfg.Artifacts == "" {
@@ -171,6 +171,9 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	var wg sync.WaitGroup
+	// Stop and join workers before releasing the writer lock or closing SQLite,
+	// including partial startup failures on a later account.
+	defer func() { cancel(); wg.Wait() }()
 	seen := map[string]bool{}
 	for _, a := range cfg.Accounts {
 		if a.ID == "" || seen[a.ID] {

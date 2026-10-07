@@ -73,16 +73,20 @@ func TestReceivedSyncScope(t *testing.T) {
 					if len(r.URL.Query()["labelIds"]) != 0 {
 						t.Error("must not require INBOX")
 					}
-					fmt.Fprint(w, `{"messages":[{"id":"archived"},{"id":"sent"},{"id":"draft"},{"id":"gone"}]}`)
+					fmt.Fprint(w, `{"messages":[{"id":"archived"},{"id":"sent"},{"id":"draft"},{"id":"spam"},{"id":"trash"},{"id":"gone"}]}`)
 				case strings.HasSuffix(r.URL.Path, "/history"):
 					if r.URL.Query().Get("historyTypes") != "messageAdded" {
 						t.Error("wrong history type")
 					}
-					fmt.Fprint(w, `{"historyId":"200","history":[{"messagesAdded":[{"message":{"id":"archived"}},{"message":{"id":"sent"}},{"message":{"id":"draft"}},{"message":{"id":"gone"}}]}]}`)
+					fmt.Fprint(w, `{"historyId":"200","history":[{"messagesAdded":[{"message":{"id":"archived"}},{"message":{"id":"sent"}},{"message":{"id":"draft"}},{"message":{"id":"spam"}},{"message":{"id":"trash"}},{"message":{"id":"gone"}}]}]}`)
 				case strings.HasSuffix(r.URL.Path, "/sent"):
 					fmt.Fprint(w, `{"id":"sent","labelIds":["SENT","INBOX"]}`)
 				case strings.HasSuffix(r.URL.Path, "/draft"):
 					fmt.Fprint(w, `{"id":"draft","labelIds":["DRAFT"]}`)
+				case strings.HasSuffix(r.URL.Path, "/spam"):
+					fmt.Fprint(w, `{"id":"spam","labelIds":["SPAM"]}`)
+				case strings.HasSuffix(r.URL.Path, "/trash"):
+					fmt.Fprint(w, `{"id":"trash","labelIds":["TRASH"]}`)
 				case strings.HasSuffix(r.URL.Path, "/gone"):
 					http.Error(w, `{"error":{"code":404}}`, 404)
 				default:

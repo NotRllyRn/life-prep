@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -25,7 +26,7 @@ type Store struct {
 	dir string
 	mu  sync.Mutex
 }
-type Event struct{ ID, Account, State, Artifact, Error string }
+type Event struct{ ID, Account, State, Artifact, Error, Result string }
 
 func Open(path, dir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -34,12 +35,59 @@ func Open(path, dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
+	schemaLock, err := os.OpenFile(path+".schema.lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	defer schemaLock.Close()
+	if err = syscall.Flock(int(schemaLock.Fd()), syscall.LOCK_EX); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS cursors(account TEXT PRIMARY KEY,cursor TEXT NOT NULL); CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,account TEXT,state TEXT,body BLOB,artifact TEXT DEFAULT '',error TEXT DEFAULT ''); CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT); `)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	// Additive migration for databases created before completion paths were separate.
+	rows, err := db.Query(`PRAGMA table_info(events)`)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	hasResult := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var def any
+		if err = rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
+			rows.Close()
+			db.Close()
+			return nil, err
+		}
+		hasResult = hasResult || name == "result"
+	}
+	err = rows.Err()
+	rows.Close()
+	if err == nil && !hasResult {
+		var tx *sql.Tx
+		tx, err = db.Begin()
+		if err == nil {
+			_, err = tx.Exec(`ALTER TABLE events ADD COLUMN result TEXT NOT NULL DEFAULT ''`)
+			if err == nil {
+				_, err = tx.Exec(`UPDATE events SET result=error,error='' WHERE state='completed'`)
+			}
+			if err == nil {
+				err = tx.Commit()
+			} else {
+				_ = tx.Rollback()
+			}
+		}
+	}
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -84,7 +132,7 @@ func (s *Store) Ingest(a, c string, ms []googlemail.Message) error {
 	return tx.Commit()
 }
 func (s *Store) List() ([]Event, error) {
-	rows, e := s.db.Query(`SELECT id,account,state,artifact,error FROM events ORDER BY rowid`)
+	rows, e := s.db.Query(`SELECT id,account,state,artifact,error,result FROM events ORDER BY rowid`)
 	if e != nil {
 		return nil, e
 	}
@@ -92,7 +140,7 @@ func (s *Store) List() ([]Event, error) {
 	out := []Event{}
 	for rows.Next() {
 		var v Event
-		if e = rows.Scan(&v.ID, &v.Account, &v.State, &v.Artifact, &v.Error); e != nil {
+		if e = rows.Scan(&v.ID, &v.Account, &v.State, &v.Artifact, &v.Error, &v.Result); e != nil {
 			return nil, e
 		}
 		out = append(out, v)
@@ -101,7 +149,7 @@ func (s *Store) List() ([]Event, error) {
 }
 func (s *Store) Inspect(id string) (Event, error) {
 	var v Event
-	e := s.db.QueryRow(`SELECT id,account,state,artifact,error FROM events WHERE id=?`, id).Scan(&v.ID, &v.Account, &v.State, &v.Artifact, &v.Error)
+	e := s.db.QueryRow(`SELECT id,account,state,artifact,error,result FROM events WHERE id=?`, id).Scan(&v.ID, &v.Account, &v.State, &v.Artifact, &v.Error, &v.Result)
 	return v, e
 }
 func (s *Store) SetPaused(p bool) error {
@@ -120,6 +168,24 @@ func (s *Store) Retry(id string) error {
 	return nil
 }
 func (s *Store) Receipt(id, result string) error {
+	// Validate the identifier before using it in a lock path.
+	if len(id) != 64 {
+		return errors.New("invalid event ID")
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return errors.New("invalid event ID")
+	}
+	if _, err := s.Inspect(id); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(filepath.Join(s.dir, id+".receipt.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
 	v, err := s.Inspect(id)
 	if err != nil {
 		return err
@@ -135,10 +201,13 @@ func (s *Store) Receipt(id, result string) error {
 		return errors.New("empty completion artifact")
 	}
 	dest := filepath.Join(s.dir, id+".result.txt")
-	if e = os.WriteFile(dest, b, 0600); e != nil {
+	if e = os.WriteFile(dest+".tmp", b, 0600); e != nil {
 		return e
 	}
-	r, e := s.db.Exec(`UPDATE events SET state='completed',error=? WHERE id=? AND state IN ('accepted','uncertain')`, dest, id)
+	if e = os.Rename(dest+".tmp", dest); e != nil {
+		return e
+	}
+	r, e := s.db.Exec(`UPDATE events SET state='completed',result=?,error='' WHERE id=? AND state IN ('accepted','uncertain')`, dest, id)
 	if e != nil {
 		return e
 	}
@@ -195,7 +264,9 @@ func (s *Store) Dispatch(ctx context.Context, url, secret string) error {
 		return errors.New("Hermes integration unconfigured")
 	}
 	var paused string
-	s.db.QueryRow(`SELECT value FROM settings WHERE key='paused'`).Scan(&paused)
+	if err := s.db.QueryRow(`SELECT value FROM settings WHERE key='paused'`).Scan(&paused); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	if paused == "true" {
 		return nil
 	}
@@ -223,8 +294,16 @@ func (s *Store) Dispatch(ctx context.Context, url, secret string) error {
 		req.Header.Set("X-Webhook-Timestamp", ts)
 		req.Header.Set("X-Webhook-Signature-V2", hex.EncodeToString(mac.Sum(nil)))
 		req.Header.Set("X-Request-ID", v.ID)
-		if _, e = s.db.Exec(`UPDATE events SET state='dispatching' WHERE id=?`, v.ID); e != nil {
+		claim, e := s.db.Exec(`UPDATE events SET state='dispatching' WHERE id=? AND state='pending'`, v.ID)
+		if e != nil {
 			return e
+		}
+		n, e := claim.RowsAffected()
+		if e != nil {
+			return e
+		}
+		if n != 1 {
+			continue
 		}
 		client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 		resp, e := client.Do(req)
@@ -240,7 +319,7 @@ func (s *Store) Dispatch(ctx context.Context, url, secret string) error {
 		} else {
 			detail = e.Error()
 		}
-		if _, e = s.db.Exec(`UPDATE events SET state=?,error=? WHERE id=?`, state, detail, v.ID); e != nil {
+		if _, e = s.db.Exec(`UPDATE events SET state=?,error=? WHERE id=? AND state='dispatching'`, state, detail, v.ID); e != nil {
 			return e
 		}
 	}
