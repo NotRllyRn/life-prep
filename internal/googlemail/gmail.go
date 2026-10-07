@@ -78,6 +78,18 @@ func New(ctx context.Context, credentialsFile, tokenFile string) (*Client, error
 // NewService injects an official SDK service, including an httptest endpoint.
 func NewService(service *gmail.Service) *Client { return &Client{service: service} }
 
+// CurrentHistory reads only the current profile baseline, never messages.
+func (c *Client) CurrentHistory(ctx context.Context) (string, error) {
+	profile, err := c.service.Users.GetProfile("me").Context(ctx).Do()
+	if err != nil {
+		return "", err
+	}
+	if profile.HistoryId == 0 {
+		return "", errors.New("Gmail profile has no history baseline")
+	}
+	return strconv.FormatUint(profile.HistoryId, 10), nil
+}
+
 // Backfill defaults to 21 days. Capture the cursor before listing so changes
 // during pagination remain available to the following History call.
 func (c *Client) Backfill(ctx context.Context, days int) ([]Message, string, error) {

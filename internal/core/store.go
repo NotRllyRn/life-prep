@@ -95,6 +95,33 @@ func Open(path, dir string) (*Store, error) {
 	return &Store{db: db, dir: dir}, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
+
+// Seed atomically replaces baselines only on an event-free database.
+// The caller must hold the mailbox writer lock.
+func (s *Store) Seed(baselines map[string]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var count int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return errors.New("seed refuses existing events")
+	}
+	for account, cursor := range baselines {
+		id, e := strconv.ParseUint(cursor, 10, 64)
+		if account == "" || e != nil || id == 0 {
+			return errors.New("invalid seed baseline")
+		}
+		if _, err = tx.Exec(`INSERT INTO cursors VALUES(?,?) ON CONFLICT(account) DO UPDATE SET cursor=excluded.cursor`, account, cursor); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
 func (s *Store) Recover() error {
 	_, e := s.db.Exec(`UPDATE events SET state='uncertain',error='restart during dispatch; reconcile before retry' WHERE state='dispatching'`)
 	return e

@@ -18,6 +18,8 @@ import (
 type Account struct{ ID, Email, Credentials, Token, Project, Subscription, PubsubCredentials, Topic string }
 type Config struct {
 	Enabled             bool
+	NewOnly             bool
+	DailyBriefing       bool
 	Database, Artifacts string
 	Accounts            []Account
 	Hermes              struct {
@@ -35,7 +37,7 @@ func main() {
 }
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: life-prep COMMAND [config.json] [event-id/result]; commands: serve status doctor queue inspect retry pause resume backfill watch receipt demo")
+		return errors.New("usage: life-prep COMMAND [config.json] [event-id/result]; commands: serve seed status doctor queue inspect retry pause resume backfill watch receipt demo")
 	}
 	cmd := os.Args[1]
 	path := "config.json"
@@ -63,7 +65,7 @@ func run() error {
 		return e
 	}
 	defer s.Close()
-	if cmd == "serve" || cmd == "backfill" || cmd == "watch" {
+	if cmd == "serve" || cmd == "backfill" || cmd == "watch" || cmd == "seed" {
 		lock, err := os.OpenFile(cfg.Database+".lock", os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
 			return err
@@ -156,16 +158,16 @@ func run() error {
 		fmt.Println("Local prerequisites present; live permissions and approvals NOT verified")
 		return nil
 	}
-	if cmd != "serve" && cmd != "watch" && cmd != "backfill" {
+	if cmd != "serve" && cmd != "watch" && cmd != "backfill" && cmd != "seed" {
 		return errors.New("unknown command")
 	}
-	if !cfg.Enabled {
+	if !cfg.Enabled && cmd != "seed" {
 		return errors.New("integrations disabled")
 	}
 	if len(cfg.Accounts) != 2 {
 		return errors.New("configure exactly two accounts")
 	}
-	if cfg.Hermes.Enabled && (cfg.Hermes.URL == "" || os.Getenv(cfg.Hermes.SecretEnv) == "") {
+	if cmd != "seed" && cfg.Hermes.Enabled && (cfg.Hermes.URL == "" || os.Getenv(cfg.Hermes.SecretEnv) == "") {
 		return errors.New("Hermes unconfigured")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -181,6 +183,15 @@ func run() error {
 		}
 		seen[a.ID] = true
 	}
+	if cmd == "seed" {
+		return seed(ctx, s, cfg.Accounts, func(ctx context.Context, a Account) (string, error) {
+			c, err := googlemail.New(ctx, a.Credentials, a.Token)
+			if err != nil {
+				return "", err
+			}
+			return c.CurrentHistory(ctx)
+		})
+	}
 	for _, a := range cfg.Accounts {
 		c, e := googlemail.New(ctx, a.Credentials, a.Token)
 		if e != nil {
@@ -190,6 +201,7 @@ func run() error {
 			if _, e = c.Watch(ctx, a.Topic); e != nil {
 				return e
 			}
+			log.Printf("watch renewal succeeded account=%q", a.ID)
 			continue
 		}
 		var mu sync.Mutex
@@ -200,17 +212,7 @@ func run() error {
 			if e != nil {
 				return e
 			}
-			var ms []googlemail.Message
-			var next string
-			if cursor == "" || force {
-				ms, next, e = c.Backfill(ctx, 21)
-			} else {
-				ms, next, e = c.History(ctx, cursor)
-				var expired *googlemail.HistoryExpiredError
-				if errors.As(e, &expired) {
-					ms, next, e = c.Backfill(ctx, -1)
-				}
-			}
+			ms, next, e := syncMessages(ctx, c, cursor, force, cfg.NewOnly)
 			if e != nil {
 				return e
 			}
@@ -225,10 +227,12 @@ func run() error {
 		if _, e = c.Watch(ctx, a.Topic); e != nil {
 			return e
 		}
+		log.Printf("watch renewal succeeded account=%q", a.ID)
 		wg.Add(1)
 		go func(a Account) {
 			defer wg.Done()
 			for ctx.Err() == nil {
+				log.Printf("receive loop starting account=%q subscription=%q", a.ID, a.Subscription)
 				e := googlemail.Receive(ctx, a.Project, a.Subscription, a.PubsubCredentials, func(_ context.Context, b []byte) error {
 					var hint struct{ EmailAddress, HistoryID string }
 					if e := json.Unmarshal(b, &hint); e != nil {
@@ -264,6 +268,7 @@ func run() error {
 							log.Print(e)
 						} else {
 							last = time.Now()
+							log.Printf("watch renewal succeeded account=%q", a.ID)
 						}
 					}
 					if e := syncMail(false); e != nil {
@@ -279,7 +284,7 @@ func run() error {
 	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()
 	for {
-		if e := s.Briefing(time.Now()); e != nil {
+		if e := dailyBriefing(cfg.DailyBriefing, s.Briefing, time.Now()); e != nil {
 			log.Print(e)
 		}
 		if e := s.Materialize(); e != nil {
