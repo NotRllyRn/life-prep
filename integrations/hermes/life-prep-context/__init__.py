@@ -1,6 +1,8 @@
 """Durable exact-item context for life-prep; no source text becomes authority."""
 from __future__ import annotations
+import asyncio
 import functools
+import subprocess
 from contextlib import closing, contextmanager
 import json
 import logging
@@ -47,6 +49,7 @@ class Bridge:
         self.store = ContextStore(self.root / 'notice-context.db')
         self.installed = {}
         self.event_by_chat = {}
+        self.send_locks = {}
 
     def prepared_context(self, event_id, session_chat):
         if not ID.fullmatch(event_id):
@@ -59,13 +62,53 @@ class Bridge:
         if source != self.root / 'artifacts' / (event_id + '.json') or not source.is_file():
             raise ValueError('unvalidated source artifact')
         event_dir = (self.root / 'prepared' / event_id).resolve()
-        if not event_dir.is_relative_to(self.root / 'prepared'):
-            raise ValueError('prepared directory escapes root')
-        paths = sorted(str(p.resolve()) for p in event_dir.rglob('*') if p.is_file() and not p.is_symlink() and p.resolve().is_relative_to(event_dir)) if event_dir.exists() else []
+        if event_dir != self.root / 'prepared' / event_id or not event_dir.is_relative_to(self.root / 'prepared'):
+            raise ValueError('prepared directory escapes exact event root')
+        paths = sorted(str(p.resolve()) for p in event_dir.rglob('*') if p.is_file() and p.name != 'receipt.json' and not p.is_symlink() and p.resolve().is_relative_to(event_dir)) if event_dir.exists() else []
         if not paths or len(paths) > 100:
             raise ValueError('no verified event-specific preparation')
         body = json.loads(row[1])
         return dict(event_id=event_id, account=row[0], source_email_id=body.get('ID', body.get('id', '')), source_ref=str(source), prepared_paths=paths, plan_paths=[p for p in paths if 'plan' in Path(p).name.lower()], originating_session_chat=session_chat)
+
+    def completed(self, event_id):
+        if not ID.fullmatch(event_id):
+            return False
+        with closing(sqlite3.connect(f"file:{self.root / 'state.db'}?mode=ro", uri=True)) as db:
+            row = db.execute('SELECT state,result FROM events WHERE id=?', (event_id,)).fetchone()
+        return bool(row and row[0] == 'completed' and Path(row[1]).is_file())
+
+    def outcome(self, context, quiet=False):
+        path = self.root / 'prepared' / context['event_id'] / 'outcome.json'
+        if str(path) not in context['prepared_paths']:
+            raise ValueError('missing outcome record')
+        data = json.loads(path.read_text())
+        if data.get('event_id') != context['event_id'] or data.get('source_ref') != context['source_ref']:
+            raise ValueError('outcome provenance mismatch')
+        if data.get('status') != ('no_action' if quiet else 'prepared') or not str(data.get('summary', '')).strip():
+            raise ValueError('missing useful outcome or no-action reason')
+        if not quiet:
+            outputs = [p for p in context['prepared_paths'] if p != str(path)]
+            if not outputs or not all(Path(p).stat().st_size and Path(p).read_bytes().strip() for p in outputs):
+                raise ValueError('missing nonempty useful preparation')
+        return data
+
+    async def receipt(self, context, outcome, notices):
+        event_id = context['event_id']
+        if self.completed(event_id):
+            return
+        path = self.root / 'prepared' / event_id / 'receipt.json'
+        if path.is_symlink():
+            raise ValueError('receipt path cannot be a symlink')
+        evidence = dict(event_id=event_id, outcome=outcome, notices=notices, prepared_paths=context['prepared_paths'])
+        path.write_text(json.dumps(evidence, indent=2))
+        path.chmod(0o600)
+        await asyncio.to_thread(subprocess.run, [str(self.root / 'life-prep'), 'receipt', str(self.root / 'config.json'), event_id, str(path)], check=True, capture_output=True, timeout=30)
+        if not self.completed(event_id):
+            raise ValueError('receipt completion readback failed')
+        with closing(sqlite3.connect(f"file:{self.root / 'state.db'}?mode=ro", uri=True)) as db:
+            result_path = db.execute('SELECT result FROM events WHERE id=?', (event_id,)).fetchone()[0]
+        if json.loads(Path(result_path).read_text()) != evidence:
+            raise ValueError('receipt evidence readback mismatch')
 
     async def ready(self, gateway, **kwargs):
         self.install(gateway)
@@ -80,9 +123,24 @@ class Bridge:
             if owner is not None:
                 previous = previous._life_prep_original
             @functools.wraps(previous)
-            async def send(chat_id, content, reply_to=None, metadata=None, _original=previous, _adapter=adapter):
+            async def send_once(chat_id, content, reply_to=None, metadata=None, _original=previous, _adapter=adapter):
+                if not str(chat_id).startswith('webhook:life-prep:'):
+                    return await _original(chat_id, content, reply_to=reply_to, metadata=metadata)
+                from gateway.platforms.base import SendResult
+                from gateway.response_filters import is_autonomous_silence_response
+                event_id = self.event_by_chat.get(str(chat_id), str(chat_id).split(':', 2)[2])
+                if self.completed(event_id):
+                    return SendResult(success=True)
+                if is_autonomous_silence_response(content):
+                    try:
+                        context = self.prepared_context(event_id, str(chat_id))
+                        outcome = self.outcome(context, quiet=True)
+                        await self.receipt(context, outcome, [])
+                    except Exception:
+                        LOG.exception('life-prep quiet outcome unverified; retained for reconciliation')
+                    return SendResult(success=True)
                 result = await _original(chat_id, content, reply_to=reply_to, metadata=metadata)
-                if not str(chat_id).startswith('webhook:life-prep:') or not getattr(result, 'success', False) or not getattr(result, 'message_id', None):
+                if not getattr(result, 'success', False) or not getattr(result, 'message_id', None):
                     return result
                 delivery = _adapter._delivery_info.get(chat_id, {})
                 if delivery.get('deliver') != 'discord' or str(delivery.get('deliver_extra', {}).get('chat_id')) != self.channel:
@@ -103,12 +161,22 @@ class Bridge:
                     discord = next(a for p,a in gateway.adapters.items() if getattr(p, 'value', str(p)) == 'discord')
                     ids = list(getattr(result, 'continuation_message_ids', ()) or ()) + [result.message_id]
                     target = discord._client.get_channel(int(self.channel)) or await discord._client.fetch_channel(int(self.channel))
+                    notices = []
                     for message_id in dict.fromkeys(str(i) for i in ids):
                         message = await target.fetch_message(int(message_id))
                         if str(message.channel.id) != self.channel or message.author.id != discord._client.user.id:
                             raise ValueError('notice readback identity mismatch')
                         saved = dict(context, notice_text=message.content, notice_message_id=message_id, notice_channel=self.channel)
-                        self.store.put(self.channel, message_id, saved)
+                        notices.append(saved)
+                    # Exact readback, not merely a bot-authored message in the right feed.
+                    if ''.join(n['notice_text'] for n in notices) != content:
+                        raise ValueError('notice text readback mismatch; reconcile transformed/chunked delivery')
+                    for saved in notices:
+                        self.store.put(self.channel, saved['notice_message_id'], saved)
+                    outcome = self.outcome(context)
+                    if event_id not in content or outcome['summary'] not in content or not any(p in content for p in context['prepared_paths']):
+                        raise ValueError('notice must identify exact event, useful outcome and artifact')
+                    await self.receipt(context, outcome, notices)
                     # Only generated agent delivery with verified preparation is mirrored.
                     from gateway.mirror import mirror_to_session
                     mirror_to_session('discord', self.channel, '[Life-prep prepared notice; exact replies/threads use durable mapping]\n' + content, source_label='life-prep', role='user')
@@ -117,6 +185,13 @@ class Bridge:
                     # Delivery already happened; NEVER trigger a resend from mapping failure.
                     LOG.exception('life-prep delivered but context mapping uncertain; reconcile without resend: chat=%s channel=%s message=%s', chat_id, self.channel, result.message_id)
                 return result
+            @functools.wraps(previous)
+            async def send(chat_id, content, reply_to=None, metadata=None, _send=send_once):
+                if not str(chat_id).startswith('webhook:life-prep:'):
+                    return await _send(chat_id, content, reply_to=reply_to, metadata=metadata)
+                event_id = self.event_by_chat.get(str(chat_id), str(chat_id).split(':', 2)[2])
+                async with self.send_locks.setdefault(event_id, asyncio.Lock()):
+                    return await _send(chat_id, content, reply_to=reply_to, metadata=metadata)
             send._life_prep_owner = self
             send._life_prep_original = previous
             adapter.send = send
@@ -162,8 +237,10 @@ class Bridge:
                     output.write(text)
                 path.chmod(0o600)
             context = self.prepared_context(event_id, str(event.source.chat_id))
+            outcome = dict(event_id=event_id, source_ref=context['source_ref'], status='prepared', summary='Synthetic local context fixture ready; no mailbox access.')
+            (folder / 'outcome.json').write_text(json.dumps(outcome))
             adapter = next(a for p,a in gateway.adapters.items() if getattr(p, 'value', str(p)) == 'webhook')
-            result = await adapter.send(event.source.chat_id, 'Synthetic preparation ready (deterministic context fixture; no mailbox access). Event '+event_id+'\n'+ '\n'.join(context['prepared_paths']))
+            result = await adapter.send(event.source.chat_id, outcome['summary']+' Event '+event_id+'\n'+ '\n'.join(context['prepared_paths']))
             if not result.success:
                 raise RuntimeError('synthetic notice delivery failed')
             return {'action': 'skip', 'reason': 'verified synthetic local preparation delivered'}
@@ -201,6 +278,12 @@ class Bridge:
             payload = getattr(event, 'raw_message', None)
             if isinstance(payload, dict) and ID.fullmatch(str(payload.get('event_id', ''))):
                 self.event_by_chat[str(source.chat_id)] = payload['event_id']
+                with closing(sqlite3.connect(f"file:{self.root / 'state.db'}?mode=ro", uri=True)) as db:
+                    row = db.execute('SELECT account FROM events WHERE id=?', (payload['event_id'],)).fetchone()
+                if row and row[0] == 'activation-synthetic':
+                    return {'action': 'skip', 'reason': 'synthetic preparation requires explicit opt-in probe'}
+                if self.completed(payload['event_id']):
+                    return {'action': 'skip', 'reason': 'verified completion already recorded'}
             return None
         if getattr(source.platform, 'value', str(source.platform)) != 'discord':
             return None

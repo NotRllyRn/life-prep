@@ -24,11 +24,11 @@ class ContextTests(unittest.TestCase):
         self.bridge = self.mod.Bridge(self.root, '123')
         (self.root / 'artifacts').mkdir()
         with closing(sqlite3.connect(self.root/'state.db')) as db, db:
-            db.execute('CREATE TABLE events(id,account,body,artifact,result)')
+            db.execute('CREATE TABLE events(id,account,body,artifact,result,state DEFAULT "accepted")')
             for event, source in [('a'*64, 'email-A'), ('b'*64, 'email-B')]:
                 artifact = self.root/'artifacts'/(event+'.json')
                 artifact.write_text('{}')
-                db.execute('INSERT INTO events VALUES(?,?,?,?,?)',(event,'synthetic',json.dumps({'ID':source}),str(artifact),''))
+                db.execute('INSERT INTO events(id,account,body,artifact,result) VALUES(?,?,?,?,?)',(event,'synthetic',json.dumps({'ID':source}),str(artifact),''))
                 prepared = self.root/'prepared'/event
                 prepared.mkdir(parents=True)
                 (prepared/'plan.md').write_text('Real fixture plan '+source)
@@ -78,7 +78,7 @@ class ContextTests(unittest.TestCase):
         calls=[]
         async def fetch(message_id):
             calls.append(message_id)
-            return NS(channel=NS(id=123),author=NS(id=99),content='Prepared fixture')
+            return NS(channel=NS(id=123),author=NS(id=99),content={111:'Generated ',222:'notice ',333:'a'*64+' '+str(self.root/'prepared'/('a'*64)/'plan.md')}[message_id])
         channel=NS(fetch_message=fetch)
         client=NS(user=NS(id=99),get_channel=lambda _:channel)
         discord=NS(_client=client)
@@ -90,8 +90,8 @@ class ContextTests(unittest.TestCase):
         self.bridge.install(gateway)
         mirrors=[]
         fake=NS(mirror_to_session=lambda *args,**kwargs:mirrors.append(args))
-        with patch.dict(sys.modules,{'gateway':NS(),'gateway.mirror':fake}):
-            asyncio.run(webhook.send(chat,'Generated notice'))
+        with patch.dict(sys.modules,{'gateway.mirror':fake}), patch.object(self.bridge, 'outcome', return_value={'summary':'Generated notice'}), patch.object(self.bridge, 'receipt', new=__import__('unittest.mock', fromlist=['AsyncMock']).AsyncMock()):
+            asyncio.run(webhook.send(chat,'Generated notice '+'a'*64+' '+str(self.root/'prepared'/('a'*64)/'plan.md')))
         self.assertEqual(calls,[111,222,333])
         for pointer in ['111','222','333']:
             saved=self.bridge.store.get('123',pointer)

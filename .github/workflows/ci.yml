@@ -18,4 +18,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+      # Exercise the real adapter/filter contract, not copied Hermes stubs.
+      - uses: actions/checkout@v4
+        with:
+          repository: NotRllyRn/hermes-agent-codex-broker
+          ref: 5fdcb6c2f4690b04858008c4f60d80faa94b19b9
+          path: .ci-hermes
+      - run: python -m pip install -e .ci-hermes
       - run: python -m unittest discover -s integrations/hermes -p 'test_*.py' -v
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.ci-hermes
+          LIFE_PREP_TEST_BINARY: ${{ github.workspace }}/bin/life-prep
