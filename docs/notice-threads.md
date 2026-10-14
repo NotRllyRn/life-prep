@@ -15,3 +15,6 @@ No-action, failed sends and unverified notices create no thread. Thread creation
 
 ## Deployment and verification
 Code publication is not activation. The installed plugin must load the new code; permissions must allow public-thread creation and thread messages. A live notice followed by an unmentioned request remains the final deployment smoke test. Do not restart a gateway from its own child process or post synthetic production notices merely to test publication.
+
+## Verification evidence
+A clean detached worktree passed `go test ./...` and all 39 Python integration tests with the built Go receipt executable (`LIFE_PREP_TEST_BINARY`) and installed Hermes source on `PYTHONPATH`. Feature tests cover one thread on the first chunk, existing-thread reuse, title bounds, persistent tracking, real Discord mention-gate behavior, exact debrief context, duplicate completion, quiet/unrelated routes, rejected readback and thread failure without resend. Legacy network fixtures lack thread methods and intentionally exercise the logged fallback; no live Discord test or deployment is claimed.
