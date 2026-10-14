@@ -162,12 +162,14 @@ class Bridge:
                     ids = list(getattr(result, 'continuation_message_ids', ()) or ()) + [result.message_id]
                     target = discord._client.get_channel(int(self.channel)) or await discord._client.fetch_channel(int(self.channel))
                     notices = []
+                    starter = None
                     for message_id in dict.fromkeys(str(i) for i in ids):
                         message = await target.fetch_message(int(message_id))
                         if str(message.channel.id) != self.channel or message.author.id != discord._client.user.id:
                             raise ValueError('notice readback identity mismatch')
                         saved = dict(context, notice_text=message.content, notice_message_id=message_id, notice_channel=self.channel)
                         notices.append(saved)
+                        starter = starter or message
                     # Exact readback, not merely a bot-authored message in the right feed.
                     if ''.join(n['notice_text'] for n in notices) != content:
                         raise ValueError('notice text readback mismatch; reconcile transformed/chunked delivery')
@@ -177,6 +179,13 @@ class Bridge:
                     if event_id not in content or outcome['summary'] not in content or not any(p in content for p in context['prepared_paths']):
                         raise ValueError('notice must identify exact event, useful outcome and artifact')
                     await self.receipt(context, outcome, notices)
+                    try:
+                        thread = starter.thread or await starter.create_thread(name=('Debrief: ' + ' '.join(outcome['summary'].split()))[:100], auto_archive_duration=1440)
+                        if str(thread.id) != notices[0]['notice_message_id'] or str(thread.parent_id) != self.channel:
+                            raise ValueError('debrief thread identity mismatch')
+                        await discord._threads.mark_async(str(thread.id))
+                    except Exception:
+                        LOG.exception('life-prep notice delivered but debrief thread unavailable: channel=%s message=%s', self.channel, notices[0]['notice_message_id'])
                     # Only generated agent delivery with verified preparation is mirrored.
                     from gateway.mirror import mirror_to_session
                     mirror_to_session('discord', self.channel, '[Life-prep prepared notice; exact replies/threads use durable mapping]\n' + content, source_label='life-prep', role='user')
