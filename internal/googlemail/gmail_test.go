@@ -20,7 +20,9 @@ func testClient(t *testing.T, h http.HandlerFunc) *Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewService(service)
+	c := NewService(service)
+	c.beforeMessage = nil
+	return c
 }
 func TestBackfillPaginationAndBody(t *testing.T) {
 	pages := 0
@@ -75,6 +77,24 @@ func TestHistoryPagination(t *testing.T) {
 	messages, cursor, err := c.History(context.Background(), "100")
 	if err != nil || len(messages) != 2 || cursor != "201" || pages != 2 {
 		t.Fatalf("%v %s %v", messages, cursor, err)
+	}
+}
+func TestHistoryPacesMessageReads(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/history") {
+			fmt.Fprint(w, `{"historyId":"101","history":[{"messagesAdded":[{"message":{"id":"a"}},{"message":{"id":"b"}}]}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"id":"message"}`)
+	})
+	calls := 0
+	c.beforeMessage = func(context.Context) error { calls++; return nil }
+	if _, _, err := c.History(context.Background(), "100"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("paced %d message reads, want 2", calls)
 	}
 }
 func TestHistoryExpired(t *testing.T) {

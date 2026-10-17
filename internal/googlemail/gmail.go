@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -35,7 +36,13 @@ type AttachmentRef struct {
 	ID, PartID, Filename, MimeType string
 	Size                           int64
 }
-type Client struct{ service *gmail.Service }
+
+const messageReadInterval = 750 * time.Millisecond
+
+type Client struct {
+	service       *gmail.Service
+	beforeMessage func(context.Context) error
+}
 
 // HistoryExpiredError means a full Backfill is required; do not advance the cursor.
 type HistoryExpiredError struct {
@@ -76,7 +83,29 @@ func New(ctx context.Context, credentialsFile, tokenFile string) (*Client, error
 }
 
 // NewService injects an official SDK service, including an httptest endpoint.
-func NewService(service *gmail.Service) *Client { return &Client{service: service} }
+func NewService(service *gmail.Service) *Client {
+	return &Client{service: service, beforeMessage: messagePacer(messageReadInterval)}
+}
+
+func messagePacer(interval time.Duration) func(context.Context) error {
+	var mu sync.Mutex
+	var next time.Time
+	return func(ctx context.Context) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if wait := time.Until(next); wait > 0 {
+			timer := time.NewTimer(wait)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		next = time.Now().Add(interval)
+		return nil
+	}
+}
 
 // CurrentHistory reads only the current profile baseline, never messages.
 func (c *Client) CurrentHistory(ctx context.Context) (string, error) {
@@ -200,6 +229,11 @@ func received(labels []string) bool {
 // Get fetches headers, metadata and inline MIME bodies, never attachments.
 // Plain text is preferred; HTML is preserved when no plain-text body exists.
 func (c *Client) Get(ctx context.Context, id string) (Message, error) {
+	if c.beforeMessage != nil {
+		if err := c.beforeMessage(ctx); err != nil {
+			return Message{}, err
+		}
+	}
 	raw, err := c.service.Users.Messages.Get("me", id).Format("full").Context(ctx).Do()
 	if err != nil {
 		return Message{}, err
